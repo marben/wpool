@@ -20,7 +20,7 @@ func (wp *WorkerPool) AddJob(f func()) {
 	wp.jobChan <- f
 }
 
-func NewWorkerPool(routinesLimit int) *WorkerPool {
+func NewPool(routinesLimit int) *WorkerPool {
 	if routinesLimit < 1 {
 		panic("Creating worker pool with less than 1 routine")
 	}
@@ -31,6 +31,13 @@ func NewWorkerPool(routinesLimit int) *WorkerPool {
 
 	go pool.manager(pool.jobChan, pool.waiterChannel)
 
+	return pool
+}
+
+// creates worker pool with number of goroutines equal to number of cores
+func NewPoolDefault() *WorkerPool {
+	numCPUs := runtime.NumCPU()
+	pool := NewPool(numCPUs)
 	return pool
 }
 
@@ -59,14 +66,14 @@ func (jq *jobQueue) Pop() (f func(), found bool) {
 	}
 }
 
-func (wp *WorkerPool) manager(funcChannel chan func(), waiterChannel chan chan struct{}) {
+func (wp *WorkerPool) manager(jobChannel chan func(), waiterChannel chan chan struct{}) {
 	var currentlyRunning int
 	var jobs jobQueue
 	var waiters []chan struct{}
 	doneChan := make(chan struct{})
 	for {
 		select {
-		case f := <-funcChannel:
+		case f := <-jobChannel:
 			if currentlyRunning < wp.routinesLimit {
 				currentlyRunning++
 				go func() {
@@ -87,22 +94,19 @@ func (wp *WorkerPool) manager(funcChannel chan func(), waiterChannel chan chan s
 			} else {
 				if currentlyRunning == 0 {
 					// we inform all those waiting, that all jobs have ended for now...
-					for _, funcChannel := range waiters {
-						funcChannel <- struct{}{}
+					for _, jobChannel := range waiters {
+						jobChannel <- struct{}{}
 					}
 					// empty (and mem-release) the waiting queue
 					waiters = nil
 				}
 			}
 		case w := <-waiterChannel:
-			waiters = append(waiters, w)
+			if currentlyRunning == 0 {
+				w <- struct{}{}
+			} else {
+				waiters = append(waiters, w)
+			}
 		}
 	}
-}
-
-// creates worker pool with number of goroutines equal to number of cores
-func NewWorkerPoolDefault() *WorkerPool {
-	numCPUs := runtime.NumCPU()
-	pool := NewWorkerPool(numCPUs)
-	return pool
 }
