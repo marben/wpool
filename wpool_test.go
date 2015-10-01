@@ -1,46 +1,8 @@
 package wpool
 
 import (
-	// "log"
-	// "fmt"
 	"testing"
-	"time"
 )
-
-func sleepFunc() {
-	time.Sleep(100 * time.Millisecond)
-}
-
-func TestRun(t *testing.T) {
-	wp := NewPool(2)
-	if wp.routinesLimit != 2 {
-		t.Fatalf("Failed to create worker pool with correct number of threads")
-	}
-	wp.AddJob(sleepFunc)
-	wp.Wait()
-}
-
-func TestRun2(t *testing.T) {
-	ch := make(chan int, 10)
-	wp := NewPool(2)
-
-	for i := 0; i < 10; i++ {
-		i := i
-		wp.AddJob(func() { ch <- i })
-		// go func() {
-		// 	ch <- i
-		// }()
-	}
-	wp.Wait()
-	close(ch)
-	var sum int
-	for x := range ch {
-		sum += x
-	}
-	if sum != 45 {
-		t.Fatalf("The sum is:", sum)
-	}
-}
 
 func TestMultiWait(t *testing.T) {
 	// fmt.Println("Test output")
@@ -77,6 +39,7 @@ func TestMultiWait(t *testing.T) {
 	}()
 
 	// ok now let's unblock all the jobs from another go routine
+	// this is done in order, but jobs should be started in order, so it shouldn't block
 	go func() {
 		for i := range funcUnblockChannels {
 			t.Log("Unlocking channel:", i)
@@ -94,4 +57,25 @@ func TestMultiWait(t *testing.T) {
 	<-waiterReturn
 	wp.Wait()
 	// fmt.Println("TestMultiWait test finished")
+
+	// some more projects and one more wait to see if we can reuse the wp
+	for i := 0; i < chanNum; i++ {
+		i := i
+		wp.AddJob(func() {
+			// fmt.Println("waiting for channel no:", i)
+			<-funcUnblockChannels[i]
+			// fmt.Println("Unlocked channel:", i)
+			funcReturnChannels[i] <- struct{}{}
+		})
+	}
+	go func() {
+		for i := range funcUnblockChannels {
+			t.Log("Unlocking channel:", i)
+			funcUnblockChannels[i] <- struct{}{}
+		}
+	}()
+	wp.Wait()
+
+	// just out of curiosity
+	wp.Wait()
 }
